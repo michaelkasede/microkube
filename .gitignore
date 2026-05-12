@@ -6,7 +6,7 @@ cloud-config.yml.tftpl
 *.tfstate
 *.tfstate.*
 *.tfvars
-!*.tfvars.example
+!example.tfvars
 crash.log
 crash.*.log
 override.tf

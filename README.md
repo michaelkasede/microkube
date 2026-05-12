@@ -27,7 +27,7 @@ microkube/
     main.tf                  cloud-init snippets + 3 VMs (cloned from VMID 103)
     outputs.tf               writes ansible/inventory/hosts.ini
     templates/hosts.ini.tftpl
-    terraform.tfvars.example
+    example.tfvars
   ansible/
     ansible.cfg, requirements.yml
     group_vars/all.yml
@@ -88,7 +88,7 @@ and re-run the script.
 
 ```bash
 cd terraform
-cp terraform.tfvars.example terraform.tfvars
+cp example.tfvars terraform.tfvars
 # Paste the pm_api_token line from the bootstrap script output
 $EDITOR terraform.tfvars
 ```
