@@ -1,0 +1,26 @@
+# Cloud init
+cloud-config.yml.tftpl
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ansible
+ansible/inventory/hosts.ini
+ansible/*.retry
+ansible/.galaxy_install_info
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,54 @@
+#cloud-config
+
+# Hostname (injected per-VM by Terraform via templatefile())
+hostname: ${hostname}
+fqdn: ${hostname}.local
+preserve_hostname: false
+
+# User - Note: Replace the SSH key with your own.
+manage_etc_hosts: true
+ssh_pwauth: false
+users:
+  - name: foobar
+    gecos: Default user
+    ssh_authorized_keys:
+      - ssh-rsa QQQIiiihsdkhllnnnzmssdsjhxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    groups:
+      - sudo
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: true
+    shell: /bin/bash
+
+# Timezone
+timezone: America/New_York
+# run apt update
+package_update: true
+# run apt upgrade
+package_upgrade: true
+
+# installing additional packages
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - gnupg-agent
+  - software-properties-common
+  - git
+  - curl
+  - htop
+  - wget
+  - qemu-guest-agent
+  - net-tools
+  - nano
+
+# run some commands on first boot
+runcmd:
+  - [ssh-keygen, "-t", "rsa", "-f", "/home/foobar/.ssh/id_rsa", "-N", ""]
+  - chown foobar:foobar /home/foobar/.ssh/id_rsa /home/foobar/.ssh/id_rsa.pub
+  - systemctl enable --now qemu-guest-agent
+  - curl -fsSL https://get.docker.com -o get-docker.sh
+  - sh get-docker.sh
+  - usermod -aG docker foobar
+  - systemctl enable docker
+  - systemctl start --no-block docker
+  - systemctl restart sshd
+  - systemctl daemon-reload

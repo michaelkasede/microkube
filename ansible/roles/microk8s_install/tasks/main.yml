@@ -1,0 +1,41 @@
+---
+- name: Ensure snapd is installed
+  ansible.builtin.apt:
+    name: snapd
+    state: present
+    update_cache: true
+
+- name: Ensure snapd service is running
+  ansible.builtin.systemd:
+    name: snapd
+    state: started
+    enabled: true
+
+- name: Install MicroK8s snap
+  community.general.snap:
+    name: microk8s
+    classic: true
+    channel: "{{ microk8s_channel }}"
+    state: present
+
+- name: Add cluster user to microk8s group
+  ansible.builtin.user:
+    name: "{{ cluster_user }}"
+    groups: microk8s
+    append: true
+
+- name: Ensure ~/.kube directory exists for cluster user
+  ansible.builtin.file:
+    path: "/home/{{ cluster_user }}/.kube"
+    state: directory
+    owner: "{{ cluster_user }}"
+    group: "{{ cluster_user }}"
+    mode: "0750"
+
+- name: Wait for MicroK8s to be ready
+  ansible.builtin.command: microk8s status --wait-ready
+  changed_when: false
+  register: microk8s_status
+  retries: 30
+  delay: 10
+  until: microk8s_status.rc == 0

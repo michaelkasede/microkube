@@ -1,0 +1,35 @@
+---
+- name: Label master with node-role.kubernetes.io/control-plane
+  ansible.builtin.command: >
+    microk8s kubectl label node {{ inventory_hostname }}
+    node-role.kubernetes.io/control-plane= --overwrite
+  register: label_master
+  changed_when: "'not labeled' not in label_master.stdout"
+
+- name: Enable core MicroK8s addons
+  ansible.builtin.command: "microk8s enable {{ item }}"
+  loop: "{{ microk8s_addons }}"
+  register: addon_enable
+  changed_when: "'is already enabled' not in addon_enable.stdout"
+
+- name: Enable MetalLB addon
+  ansible.builtin.command: "microk8s enable metallb:{{ microk8s_metallb_range }}"
+  register: metallb_enable
+  changed_when: "'is already enabled' not in metallb_enable.stdout"
+  when: microk8s_metallb_enabled | bool
+
+- name: Drop kubeconfig for the cluster user
+  ansible.builtin.shell: |
+    set -o pipefail
+    microk8s config > /home/{{ cluster_user }}/.kube/config
+    chown {{ cluster_user }}:{{ cluster_user }} /home/{{ cluster_user }}/.kube/config
+    chmod 0600 /home/{{ cluster_user }}/.kube/config
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Print kubeconfig fetch hint
+  ansible.builtin.debug:
+    msg: >
+      To use kubectl from your laptop:
+        scp {{ cluster_user }}@{{ ansible_host }}:.kube/config ~/.kube/config

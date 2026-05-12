@@ -1,0 +1,40 @@
+---
+- name: Wait for cloud-init to finish on all cluster nodes
+  hosts: microkube
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH to become reachable
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ wait_for_ssh_timeout }}"
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      register: cloud_init_status
+      retries: 30
+      delay: 10
+      until: cloud_init_status.rc == 0
+
+- name: Common base configuration
+  hosts: microkube
+  become: true
+  roles:
+    - common
+
+- name: Install MicroK8s on all nodes
+  hosts: microkube
+  become: true
+  roles:
+    - microk8s_install
+
+- name: Configure MicroK8s control-plane
+  hosts: masters
+  become: true
+  roles:
+    - microk8s_master
+
+- name: Join workers to the cluster
+  hosts: workers
+  become: true
+  roles:
+    - microk8s_worker

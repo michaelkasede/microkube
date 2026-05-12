@@ -1,0 +1,57 @@
+---
+- name: Determine master node from inventory
+  ansible.builtin.set_fact:
+    master_host: "{{ groups['masters'][0] }}"
+
+- name: Check whether this worker is already in the cluster
+  ansible.builtin.command: microk8s kubectl get nodes -o name
+  delegate_to: "{{ master_host }}"
+  changed_when: false
+  register: cluster_nodes
+  failed_when: false
+
+- name: Set join_needed fact
+  ansible.builtin.set_fact:
+    join_needed: "{{ ('node/' + inventory_hostname) not in (cluster_nodes.stdout_lines | default([])) }}"
+
+- name: Generate a join token on the master
+  ansible.builtin.command: microk8s add-node --token-ttl 600 --format short
+  delegate_to: "{{ master_host }}"
+  register: add_node_cmd
+  changed_when: false
+  when: join_needed | bool
+
+- name: Extract a usable join command for this worker
+  ansible.builtin.set_fact:
+    join_command: >-
+      {{
+        (add_node_cmd.stdout_lines
+          | select('match', '^microk8s join ')
+          | list
+          | first)
+      }}
+  when: join_needed | bool
+
+- name: Join this worker to the cluster
+  ansible.builtin.command: "{{ join_command }} --worker"
+  register: join_result
+  changed_when: "'already known' not in join_result.stdout"
+  when: join_needed | bool
+
+- name: Wait for node to register on the master
+  ansible.builtin.command: "microk8s kubectl get node {{ inventory_hostname }}"
+  delegate_to: "{{ master_host }}"
+  register: node_check
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: node_check.rc == 0
+  when: join_needed | bool
+
+- name: Label this worker with node-role.kubernetes.io/worker
+  ansible.builtin.command: >
+    microk8s kubectl label node {{ inventory_hostname }}
+    node-role.kubernetes.io/worker= --overwrite
+  delegate_to: "{{ master_host }}"
+  register: label_worker
+  changed_when: "'not labeled' not in label_worker.stdout"
