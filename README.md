@@ -15,6 +15,121 @@ Laptop  --(API token + SSH)--> Proxmox (10.10.10.10)
                                         mk-w-2  (10.10.10.23)  worker
 ```
 
+## Node specifications
+
+Each of the 3 VMs is provisioned with the following hardware:
+
+| Resource     | Value         | Cluster total (3 VMs) |
+| ------------ | ------------- | --------------------- |
+| vCPU         | 2             | 6                     |
+| Memory       | 4 GiB         | 12 GiB                |
+| Disk         | 40 GiB        | 120 GiB               |
+| Machine type | `q35`         | -                     |
+| CPU type     | `host`        | -                     |
+| BIOS         | SeaBIOS       | -                     |
+| Guest OS     | Ubuntu 24.04  | -                     |
+
+### Where to change the specs
+
+All of these are exposed as Terraform variables in
+[`terraform/variables.tf`](terraform/variables.tf):
+
+| Variable          | Default  | What it controls                              |
+| ----------------- | -------- | --------------------------------------------- |
+| `vm_cpu_cores`    | `2`      | vCPU per node                                 |
+| `vm_memory_mb`    | `4096`   | RAM per node (MiB)                            |
+| `vm_disk_gb`      | `40`     | Root disk per node (GiB)                      |
+| `vm_machine_type` | `"q35"`  | QEMU machine type                             |
+| `vm_cpu_type`     | `"host"` | QEMU CPU type                                 |
+| `nodes`           | 3 nodes  | Number of nodes, hostnames, roles, static IPs |
+
+To override without touching version-controlled code, put them in
+[`terraform/terraform.tfvars`](terraform/example.tfvars):
+
+```hcl
+vm_cpu_cores = 4
+vm_memory_mb = 8192
+vm_disk_gb   = 60
+```
+
+### Why these specs?
+
+MicroK8s' [official minimum](https://microk8s.io/docs/install-alternatives)
+is 4 GiB RAM and 20 GiB disk per node. The defaults here (4 GiB / 40 GiB)
+are exactly the floor for RAM and a comfortable margin for disk (room for
+container images, hostpath volumes, and `journald`). 2 vCPU is enough for
+a control-plane node + a worker workload that's mostly Deployments,
+DaemonSets, and a handful of stateful pods — typical homelab usage.
+
+The whole cluster fits in **6 vCPU and 12 GiB RAM**, leaving comfortable
+headroom on a typical homelab Proxmox box (e.g. 8C/16C CPU, 32-64 GiB RAM)
+for the Proxmox host itself, other VMs, and LXC containers. CPU overcommit
+on Proxmox is harmless here because Kubernetes control-plane traffic is
+spiky and rarely saturates cores.
+
+If you have spare capacity and want to run heavier workloads (e.g. CI
+runners, Postgres, observability stacks), bump `vm_cpu_cores` to `4` and
+`vm_memory_mb` to `8192`.
+
+### Why machine type `q35`?
+
+`q35` emulates a modern Intel Q35 Express chipset; the only alternative,
+`i440fx`, emulates a 1996-era PIIX3 chipset. The relevant practical
+differences for a Kubernetes homelab:
+
+- **Native PCIe**, not PCI-with-bridge. Modern Linux guests (and the
+  virtio drivers MicroK8s relies on) get a topology that matches real
+  hardware. Fewer driver edge cases, cleaner `lspci` output.
+- **Better hot-plug behavior** for NICs and disks, which matters when
+  Terraform later resizes or replaces devices on a running VM.
+- **Forward-compatible** with PCIe passthrough (GPUs, SR-IOV NICs) if you
+  ever want to schedule GPU pods or do MetalLB BGP off a passthrough card.
+- **Recommended by Proxmox** for any "modern Linux" guest. Ubuntu 24.04
+  works on both, but `q35` is the documented happy path.
+
+There is essentially zero downside on a single Proxmox host: `q35` doesn't
+cost CPU, RAM, or disk versus `i440fx`. The only reason to stick with
+`i440fx` is compatibility with very old guest OSes (Windows XP, etc.).
+
+### Why CPU type `host`?
+
+`host` is shorthand for "pass every CPU feature flag from the physical
+processor straight through to the guest". The alternative (`kvm64`, the
+QEMU default, or a baseline like `x86-64-v2-AES`) emulates a fixed,
+lowest-common-denominator CPU model so VMs can be live-migrated between
+hosts with different silicon.
+
+For a single-node homelab Proxmox install, `host` is the right call:
+
+- **No emulation overhead** for unsupported instructions. The guest sees
+  AVX, AVX2, AES-NI, BMI2, SSE4.2, etc. directly. etcd, kube-apiserver,
+  and containerd all benefit (TLS, hashing, image layer decompression,
+  protobuf encoding).
+- **Snap and Go binaries** in MicroK8s ship pre-compiled assuming modern
+  x86_64 feature sets. Running them on a CPU model that hides those flags
+  means slower code paths.
+- **No migration cost** to pay, because there's nothing to migrate to.
+  The trade-off you'd accept on a multi-node Proxmox cluster (where
+  `host` can prevent live-migration to a different CPU family) simply
+  doesn't apply here.
+
+If you ever add a second Proxmox node and want live-migration, change
+`vm_cpu_type` to `"x86-64-v2-AES"` (the most permissive safe baseline
+for any post-2013 Intel/AMD CPU) and re-apply.
+
+### Homelab-friendly defaults at a glance
+
+| Decision      | Choice    | Why it's good for homelabs                                  |
+| ------------- | --------- | ----------------------------------------------------------- |
+| Cluster size  | 3 nodes   | Smallest setup that demonstrates master/worker separation   |
+| vCPU / RAM    | 2 / 4 GiB | Hits MicroK8s minimums; fits comfortably on 16-32 GiB hosts |
+| Disk          | 40 GiB    | Headroom for container images without bloating thin pools   |
+| Machine       | `q35`     | Future-proof, identical performance, no driver gotchas      |
+| CPU           | `host`    | Free performance on single-node Proxmox                     |
+| BIOS          | SeaBIOS   | No EFI disk overhead; cloud images boot fine                |
+| Full clone    | enabled   | VMs are independent of the template after creation          |
+| Static IPs    | yes       | Predictable for kubeconfig, MetalLB, port-forwarding        |
+
 ## Repository layout
 
 ```text
@@ -30,8 +145,9 @@ microkube/
     example.tfvars
   ansible/
     ansible.cfg, requirements.yml
-    group_vars/all.yml
-    inventory/               hosts.ini generated by terraform apply
+    inventory/
+      group_vars/all.yml     cluster-wide vars (microk8s channel, addons, etc.)
+      hosts.ini              generated by terraform apply
     playbooks/site.yml
     roles/
       common/
@@ -153,7 +269,7 @@ redone next time.
   [`terraform/variables.tf`](terraform/variables.tf) (or override it via
   `terraform.tfvars`).
 - **Different MicroK8s channel or addons**: edit
-  [`ansible/group_vars/all.yml`](ansible/group_vars/all.yml).
+  [`ansible/inventory/group_vars/all.yml`](ansible/inventory/group_vars/all.yml).
 - **Cloud-init changes** (extra packages, different user, etc.): edit
   [`cloud-config.yml.tftpl`](cloud-config.yml.tftpl). The
   `${hostname}` placeholder is the only Terraform-rendered field.

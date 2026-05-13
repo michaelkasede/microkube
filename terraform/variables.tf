@@ -103,13 +103,13 @@ variable "vm_cpu_type" {
 variable "vm_cpu_cores" {
   description = "vCPU cores per cluster VM."
   type        = number
-  default     = 4
+  default     = 2
 }
 
 variable "vm_memory_mb" {
   description = "Memory (MiB) per cluster VM."
   type        = number
-  default     = 8192
+  default     = 4096
 }
 
 variable "vm_disk_gb" {
